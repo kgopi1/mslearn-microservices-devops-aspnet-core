@@ -1,21 +1,15 @@
 #!/bin/bash
 
 # Color theming
-if [ -f ~/clouddrive/aspnet-learn/deploy/k8s/theme.sh ]
+. <(cat ./theme.sh)
+
+# AZ CLI check
+. <(cat ./azure-cli-check.sh)
+
+if [ -f ../../create-acr-exports.txt ]
 then
-  . <(cat ~/clouddrive/aspnet-learn/deploy/k8s/theme.sh)
+  eval $(cat ../../create-acr-exports.txt)
 fi
-
-echo
-echo "Building images to ACR"
-echo "======================"
-
-if [ -f ~/clouddrive/aspnet-learn-temp/create-acr-exports.txt ]
-then
-  eval $(cat ~/clouddrive/aspnet-learn-temp/create-acr-exports.txt)
-fi
-
-pushd /src/deploy/k8s > /dev/null
 
 if [ -z "$ESHOP_REGISTRY" ] || [ -z "$ESHOP_ACRNAME" ]
 then
@@ -39,6 +33,8 @@ done
 echo
 echo "Building and publishing docker images to $ESHOP_REGISTRY"
 
+echo " "
+
 # This is the list of {service}:{image}>{dockerfile} of the application
 appServices=$(cat ./build-to-acr.services)
 
@@ -49,7 +45,7 @@ else
     serviceList=${services//,/ }
 fi
 
-pushd ../..  > /dev/null
+pushd ../.. >/dev/null
 
 for service in $serviceList
 do
@@ -61,11 +57,9 @@ do
 
     echo
     echo "Building image \"$image\" for service \"$service\" with \"$dockerfile.acr\"..."
-    serviceCmd="az acr build -r $ESHOP_ACRNAME -t $ESHOP_REGISTRY/$image:linux-latest -f $dockerfile.acr ."
+    serviceCmd="az acr build -r $ESHOP_ACRNAME -t $ESHOP_REGISTRY/$image:linux-net6-coupon -f $dockerfile.acr ."
     echo "${newline} > ${azCliCommandStyle}$serviceCmd${defaultTextStyle}${newline}"
     eval $serviceCmd
 done
-    
-popd  > /dev/null
 
-popd  > /dev/null
+popd >/dev/null

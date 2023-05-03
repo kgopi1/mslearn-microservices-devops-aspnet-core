@@ -1,9 +1,11 @@
 #!/bin/bash
+# Change this for a different VM size
+vmSize=Standard_D2_v5
 
 # Color theming
-if [ -f ~/clouddrive/aspnet-learn/deploy/k8s/theme.sh ]
+if [ -f ./theme.sh ]
 then
-  . <(cat ~/clouddrive/aspnet-learn/deploy/k8s/theme.sh)
+  . <(cat ./theme.sh)
 fi
 
 eshopSubs=${ESHOP_SUBS}
@@ -76,8 +78,9 @@ exec 2>&3
 if [ -z "$existingAks" ]
 then
     echo
-    echo "Creating AKS cluster \"$eshopAksName\" in resource group \"$eshopRg\" and location \"$eshopLocation\"..."
-    aksCreateCommand="az aks create -n $eshopAksName -g $eshopRg -c $eshopNodeCount --node-vm-size Standard_D2_v3 --vm-set-type VirtualMachineScaleSets -l $eshopLocation --enable-managed-identity --generate-ssh-keys -o json"
+    echo "Creating AKS cluster \"$eshopAksName\" in resource group \"$eshopRg\" and location \"$eshopLocation\"."
+    echo "${warningStyle}Using VM size \"$vmSize\". You can change this by modifying the value of the \"vmSize\" variable at the top of \"create-aks.sh\"${defaultTextStyle}"
+    aksCreateCommand="az aks create -n $eshopAksName -g $eshopRg -c $eshopNodeCount --node-vm-size $vmSize --vm-set-type VirtualMachineScaleSets -l $eshopLocation --enable-managed-identity --generate-ssh-keys -o json"
     echo "${newline} > ${azCliCommandStyle}$aksCreateCommand${defaultTextStyle}${newline}"
     retry=5
     aks=`$aksCreateCommand`
@@ -112,54 +115,44 @@ az aks get-credentials -n $eshopAksName -g $eshopRg --overwrite-existing
 # Ingress controller and load balancer (LB) deployment
 
 echo
-echo "${defaultTextStyle}Installing Nginx ingress controller..."
+echo "Installing Nginx ingress controller..."
 kubectl apply -f ingress-controller/nginx-controller.yaml
-kubectl apply -f ingress-controller/nginx-loadbalancer.yaml
 
 echo
 echo "Getting Load Balancer public IP..."
 
-aksNodeRGCommand="az aks list --query \"[?name=='$eshopAksName'&&resourceGroup=='$eshopRg'].nodeResourceGroup\" -otsv"
-
-retry=5
-echo "${newline} > ${azCliCommandStyle}$aksNodeRGCommand${defaultTextStyle}${newline}"
-aksNodeRG=$(eval $aksNodeRGCommand)
-while [ "$aksNodeRG" == "" ]
+while [ -z "$eshopLbIp" ]
 do
-    echo
-    echo "Unable to obtain load balancer resource group. Retrying in 5s..."
-    let retry--
-    sleep 5
-    echo
-    echo "Retrying..."
-    echo $aksNodeRGCommand
-    aksNodeRG=$(eval $aksNodeRGCommand)
-done
-
-
-while [ "$eshopLbIp" == "" ] || [ "$eshopLbIp" == "<pending>" ]
-do
-    eshopLbIp=`kubectl get svc/ingress-nginx -n ingress-nginx -o jsonpath='{.status.loadBalancer.ingress[0].ip}'`
-    if [ "$eshopLbIp" == "" ]
+    eshopLbIpCommand="kubectl get svc -n ingress-nginx -o json | jq -r -e '.items[0].status.loadBalancer.ingress[0].ip // empty'"
+    echo "${newline} > ${genericCommandStyle}$eshopLbIpCommand${defaultTextStyle}${newline}"
+    eshopLbIp=$(eval $eshopLbIpCommand)
+    if [ -z "$eshopLbIp" ]
     then
-        echo "Waiting for the Load Balancer IP address - Ctrl+C to cancel..."
+        echo "Load balancer wasn't ready. If this takes more than a minute or two, something is probably wrong. Trying again in 5 seconds..."
         sleep 5
-    else
-        echo "Assigned IP address: $eshopLbIp"
     fi
 done
 
+echo "Load balancer IP is $eshopLbIp"
+
 echo
 echo "Nginx ingress controller installed."
+
+echo
+echo "Wait until ingress is ready to process requests"
+
+kubectl wait --namespace ingress-nginx \
+  --for=condition=ready pod \
+  --selector=app.kubernetes.io/component=controller \
+  --timeout=90s
 
 echo export ESHOP_RG=$eshopRg > create-aks-exports.txt
 echo export ESHOP_LOCATION=$eshopLocation >> create-aks-exports.txt
 echo export ESHOP_AKSNAME=$eshopAksName >> create-aks-exports.txt
 echo export ESHOP_AKSNODERG=$aksNodeRG >> create-aks-exports.txt
 echo export ESHOP_LBIP=$eshopLbIp >> create-aks-exports.txt
-mv -f create-aks-exports.txt ~/clouddrive/aspnet-learn-temp/
 
-pushd ~/clouddrive/aspnet-learn-temp > /dev/null
-echo "${headingStyle}AKS and ACR Configuration values${defaultTextStyle}${newline}" > config.txt
-echo "IP_ADDRESS: ${headingStyle}$eshopLbIp${defaultTextStyle}" >> config.txt
-popd  > /dev/null
+mv -f create-aks-exports.txt ../../
+
+echo "${headingStyle}AKS and ACR Configuration values${defaultTextStyle}${newline}" > ../../config.txt
+echo "IP_ADDRESS: ${headingStyle}$eshopLbIp${defaultTextStyle}" >> ../../config.txt
